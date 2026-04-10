@@ -1,0 +1,7 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "New_Library")(type "KiCad")(uri "${KIPRJMOD}/Elements/New_Library.kicad_sym")(options "")(descr ""))
+  (lib (name "LMR14010ADDCR")(type "KiCad")(uri "${KIPRJMOD}/Elements/LMR14010ADDCR.kicad_sym")(options "")(descr ""))
+  (lib (name "ul_TPS560430XDBVR")(type "KiCad")(uri "${KIPRJMOD}/Elements/ul_TPS560430XDBVR.kicad_sym")(options "")(descr ""))
+  (lib (name "UCC27211D")(type "KiCad")(uri "${KIPRJMOD}/Elements/UCC27211D.kicad_sym")(options "")(descr ""))
+)

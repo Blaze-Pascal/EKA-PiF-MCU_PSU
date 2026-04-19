@@ -470,7 +470,7 @@
 		)
 		(uuid "0527372a-dfca-43e0-9f64-6ec04dd98899")
 	)
-	(text "\n	JLC04151H-33313\n\n	> L1: 		| Copper; 1 oz; 			| PWR + Digital\n	> Prepreg: 	| 3313 RC57% 4.2mil			|\n	> L2: 		| Copper; 0.60 mil; 		| GND\n	> Core:		| 1.3mm H/HOZ with copper	|\n	> L3: 		| Copper; 0.60 mil; 		| GND\n	> Prepreg: 	| 3313 RC57% 4.2mil			|\n	> L4: 		| Copper; 1 oz; 			| Digital signal\n"
+	(text "\n	JLC04151H-33313\n\n	> L1: 		| Copper; 1 oz; 			| PWR + Signal\n	> Prepreg: 	| 3313 RC57% 4.2mil			|\n	> L2: 		| Copper; 0.60 mil; 		| GND\n	> Core:		| 1.3mm H/HOZ with copper	|\n	> L3: 		| Copper; 0.60 mil; 		| GND\n	> Prepreg: 	| 3313 RC57% 4.2mil			|\n	> L4: 		| Copper; 1 oz; 			| Signal\n"
 		(exclude_from_sim no)
 		(at 15.24 20.32 0)
 		(effects
@@ -506,7 +506,7 @@
 		)
 		(uuid "904d0ecc-47ac-4b18-b69a-87b82d9921c7")
 	)
-	(text "\n	>"
+	(text "\n	> 2-phase\n	> Synchronous\n	> 30V in, 12V 10A out \n	> buck converter\n	> based on STM32G474"
 		(exclude_from_sim no)
 		(at 160.02 20.32 0)
 		(effects

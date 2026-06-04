@@ -3043,7 +3043,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "5R"
+		(property "Value" "3.3R"
 			(at 152.4 97.7899 90)
 			(effects
 				(font
@@ -3052,7 +3052,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "PCM_Resistor_SMD_AKL:R_0603_1608Metric"
+		(property "Footprint" "PCM_Resistor_SMD_AKL:R_0603_1608Metric_Pad0.98x0.95mm"
 			(at 154.94 89.662 90)
 			(effects
 				(font
@@ -3755,7 +3755,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "5R"
+		(property "Value" "3.3R"
 			(at 152.4 77.4699 90)
 			(effects
 				(font
@@ -3764,7 +3764,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "PCM_Resistor_SMD_AKL:R_0603_1608Metric"
+		(property "Footprint" "PCM_Resistor_SMD_AKL:R_0603_1608Metric_Pad0.98x0.95mm"
 			(at 154.94 69.342 90)
 			(effects
 				(font
@@ -3999,7 +3999,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "PCM_Package_SO_AKL:Infineon_PG-DSO-8-27_3.9x4.9mm_EP2.65x3mm_ThermalVias2"
+		(property "Footprint" "PCM_Package_SO_AKL:HTSOP-8-1EP_3.9x4.9mm_P1.27mm_EP2.4x3.2mm_ThermalVias"
 			(at 62.23 91.44 0)
 			(effects
 				(font

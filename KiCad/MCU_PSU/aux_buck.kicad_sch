@@ -1456,7 +1456,7 @@
 				)
 			)
 		)
-		(property "Value" "TPS560430XDBVR"
+		(property "Value" "TPS560430XDBVR-MS"
 			(at 128.27 82.042 0)
 			(effects
 				(font

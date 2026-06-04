@@ -55,9 +55,10 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-
+extern DMA_HandleTypeDef hdma_adc3;
+extern FMAC_HandleTypeDef hfmac;
 /* USER CODE BEGIN EV */
-
+extern HRTIM_HandleTypeDef hhrtim1;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -197,6 +198,83 @@ void SysTick_Handler(void)
 /* For the available peripheral interrupt handler names,                      */
 /* please refer to the startup file (startup_stm32g4xx.s).                    */
 /******************************************************************************/
+
+/**
+  * @brief This function handles DMA1 channel1 global interrupt.
+  */
+void DMA1_Channel1_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA1_Channel1_IRQn 0 */
+
+  /* USER CODE END DMA1_Channel1_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdma_adc3);
+  /* USER CODE BEGIN DMA1_Channel1_IRQn 1 */
+
+  /* USER CODE END DMA1_Channel1_IRQn 1 */
+}
+
+/**
+  * @brief This function handles FMAC interrupt.
+  */
+void FMAC_IRQHandler(void)
+{
+  /* USER CODE BEGIN FMAC_IRQn 0 */
+	// Sprawdzamy czy przerwanie pochodzi od gotowych danych (YEMPTY)
+	  if((FMAC->SR & FMAC_SR_YEMPTY) == 0)
+	  {
+	      // 1. Odczyt rejestru RDATA zdejmuje sprzętową flagę przerwania
+	      int16_t control_effort_q15 = (int16_t)READ_REG(FMAC->RDATA);
+
+	      // 2. Skalowanie
+	      int32_t pwm_base = 21760 * 0.2f; // 20%
+	      int32_t duty_change = ((int32_t)control_effort_q15 * 21760) >> 15;
+	      int32_t new_ton = pwm_base + duty_change;
+
+	      // 3. Saturacja
+	      if (new_ton < 435)   new_ton = 435;
+	      if (new_ton > 10880) new_ton = 10880;
+
+	      // 4. BEZPOŚREDNIA AKTUALIZACJA REJESTRÓW HRTIM (Najszybsza metoda)
+	      //HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton;
+
+	      uint32_t reset_b = (21760 / 2) + new_ton;
+	      //HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
+
+	      // Wyliczenie połowy Toff dla przyszłego pomiaru prądu
+	      uint32_t half_toff = (21760 - new_ton) / 2;
+	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP3xR = new_ton + half_toff;
+	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP4xR = (reset_b + half_toff) % 21760;
+
+	      //BALANSOWANIE FAZ
+	      int32_t current_ph1 = (int32_t)(ADC2->DR >> 4);
+	      int32_t current_ph2 = (int32_t)(ADC1->DR >> 4);
+
+	      // Błąd prądu
+	      int32_t i_error = current_ph1 - current_ph2;
+
+	      // Podział poprawki (jeszcze mniejsze wzmocnienie, np. >> 2 co daje Kp=0.25)
+	      int32_t balance_effort = i_error >> 2;
+
+	      if (balance_effort > 300) balance_effort = 300;
+	      if (balance_effort < -300) balance_effort = -300;
+
+	      // Faza 1 - Odejmujemy połowę błędu
+	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton - balance_effort;
+
+	      // Faza 2 - Dodajemy połowę błędu
+	      uint32_t reset_b = (21760 / 2) + new_ton + balance_effort;
+	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
+
+	      // 5. Wychodzimy z funkcji, omijając wywołanie funkcji HAL
+	      return;
+	  }
+	  return;
+  /* USER CODE END FMAC_IRQn 0 */
+  HAL_FMAC_IRQHandler(&hfmac);
+  /* USER CODE BEGIN FMAC_IRQn 1 */
+
+  /* USER CODE END FMAC_IRQn 1 */
+}
 
 /* USER CODE BEGIN 1 */
 

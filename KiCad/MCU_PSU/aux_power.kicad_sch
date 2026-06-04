@@ -2736,7 +2736,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10k"
+		(property "Value" "1k"
 			(at 71.12 90.1699 0)
 			(effects
 				(font
@@ -2889,7 +2889,7 @@
 				)
 			)
 		)
-		(property "Value" "LED"
+		(property "Value" "G_LED"
 			(at 75.2475 99.06 90)
 			(effects
 				(font
@@ -3299,7 +3299,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "3.3k"
+		(property "Value" "100R"
 			(at 87.63 90.1699 0)
 			(effects
 				(font
@@ -3855,7 +3855,7 @@
 				)
 			)
 		)
-		(property "Value" "LED"
+		(property "Value" "G_LED"
 			(at 91.7575 99.06 90)
 			(effects
 				(font
@@ -4066,7 +4066,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "28k"
+		(property "Value" "3.3k"
 			(at 54.61 90.1699 0)
 			(effects
 				(font
@@ -4477,7 +4477,7 @@
 				)
 			)
 		)
-		(property "Value" "LED"
+		(property "Value" "G_LED"
 			(at 58.7375 99.06 90)
 			(effects
 				(font
@@ -5472,7 +5472,7 @@
 				)
 			)
 		)
-		(property "Value" "15A"
+		(property "Value" "7A"
 			(at 69.85 44.45 90)
 			(effects
 				(font
@@ -5623,7 +5623,7 @@
 				(hide yes)
 			)
 		)
-		(property "RFB_TOP_VAL" "100k"
+		(property "RFB_TOP_VAL" "150k"
 			(at 184.404 54.864 0)
 			(show_name yes)
 			(effects
@@ -5633,7 +5633,7 @@
 				(justify left top)
 			)
 		)
-		(property "RFB_BOT1_VAL" "10k"
+		(property "RFB_BOT1_VAL" "12k"
 			(at 184.404 56.896 0)
 			(show_name yes)
 			(effects
@@ -5726,7 +5726,7 @@
 				(hide yes)
 			)
 		)
-		(property "RFB_TOP_VAL" "12k"
+		(property "RFB_TOP_VAL" "150k"
 			(at 184.404 94.234 0)
 			(show_name yes)
 			(effects
@@ -5736,7 +5736,7 @@
 				(justify left top)
 			)
 		)
-		(property "RFB_BOT1_VAL" "3.3k"
+		(property "RFB_BOT1_VAL" "33k"
 			(at 184.404 96.266 0)
 			(show_name yes)
 			(effects
@@ -5746,7 +5746,7 @@
 				(justify left top)
 			)
 		)
-		(property "RFB_BOT2_VAL" "33k"
+		(property "RFB_BOT2_VAL" "220k"
 			(at 184.404 98.298 0)
 			(show_name yes)
 			(effects

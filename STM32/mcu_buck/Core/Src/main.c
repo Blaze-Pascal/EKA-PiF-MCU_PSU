@@ -64,7 +64,11 @@ OPAMP_HandleTypeDef hopamp3;
 TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
-float target_voltage = 12.0f; // Początkowe napięcie
+float target_voltage = 12.0f;  // Cel docelowy (zmieniany enkoderem)
+float current_voltage = 0.0f;  // Rzeczywiste napięcie, od którego startujemy
+uint32_t last_update = 0;
+volatile uint32_t new_adc_offset = 0; // Wartość startowa
+volatile uint8_t update_offset_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -155,45 +159,13 @@ int main(void)
 	HAL_COMP_Start(&hcomp1); // Faza 2
 	HAL_COMP_Start(&hcomp3); // Faza 1
 
-	////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    uint32_t T_PERIOD = 21760;
-    float DUTY = 0.2f;
-
-    // 1. Obliczenie czasu ON
-    uint32_t T_COMP_TON = (uint32_t)(((float)T_PERIOD * DUTY) + 0.5f);
-
-    // 2. Przesunięcie fazowe o 180 stopni (w połowie okresu Mastera) - 10880 ticks
-    uint32_t T_MASTER_PHASE_SHIFT = T_PERIOD / 2;
-
-    // === FAZA A (Timer A) ===
-    // Włącza się na początku okresu (0), wyłącza przy T_COMP_TON
-    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, T_COMP_TON);
-
-    // === FAZA B (Timer B) ===
-    // Ponieważ liczniki bazy czasu są zsynchronizowane, Faza B włącza się przy 10880.
-    // Aby trwała tyle samo co Faza A, musi się wyłączyć przy: 10880 + 8704 = 19584
-    uint32_t T_COMP_TIMB_RESET = T_MASTER_PHASE_SHIFT + T_COMP_TON;
-    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, T_COMP_TIMB_RESET);
-
-    // === POMIARY ADC (Wyznaczenie środka czasu TOFF dla prądu średniego) ===
-    uint32_t T_HALF_TOFF = (T_PERIOD - T_COMP_TON) / 2; // Połowa czasu OFF (6528 ticks)
-    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_3, T_COMP_TON + T_HALF_TOFF);	// Dla Fazy A: Środek TOFF wypada w punkcie TON + (TOFF / 2)
-
-    uint32_t T_TIMB_ADC_TRIG = (T_COMP_TIMB_RESET + T_HALF_TOFF) % T_PERIOD;
-    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_4, T_TIMB_ADC_TRIG); // Dla Fazy B: Środek TOFF wypada w punkcie RESET_B + (TOFF / 2).
-    // Używamy modulo (%), ponieważ punkt ten może przekroczyć okres i zawinąć się na początek
-
-    // 3. Włączenie wyjść fizycznych HRTIM (TA1, TA2, TB1, TB2)
-    HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
-
-    // 4. Start liczników za pomocą poprawnych masek bitowych (ID)!
-    HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER | HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     // 1. WŁĄCZENIE OPAMP (Bufor napięcia sprzężenia zwrotnego - OPAMP3)
     HAL_OPAMP_Start(&hopamp3);
+
 
     // Opcjonalnie włącz od razu tory prądowe na przyszłość
     // HAL_OPAMP_Start(&hopamp1);
@@ -254,10 +226,58 @@ int main(void)
 
 	HAL_ADCEx_Calibration_Start(&hadc3, ADC_SINGLE_ENDED);
 	HAL_ADC_Start_DMA(&hadc3, (uint32_t *)&FMAC->WDATA, 1);
+	// ZABIJA MORDERCZE PRZERWANIA DMA WŁĄCZONE PRZEZ HAL!
+	__HAL_DMA_DISABLE_IT(&hdma_adc3, DMA_IT_TC | DMA_IT_HT | DMA_IT_TE);
+	// Na wszelki wypadek upewniamy się, że ADC też nas nie męczy
+	__HAL_ADC_DISABLE_IT(&hadc3, ADC_IT_OVR | ADC_IT_EOC | ADC_IT_EOS);
 
 	// Uruchomienie pomiarów prądu (bez DMA i Przerwań - w trybie continuous na żądanie sprzętowe)
+	HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED);
+	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 	HAL_ADC_Start(&hadc2); // Faza 1 (Wyzwala TRG5 / CMP4)
 	HAL_ADC_Start(&hadc1); // Faza 2 (Wyzwala TRG1 / CMP3)
+    HAL_OPAMP_Start(&hopamp1);
+    HAL_OPAMP_Start(&hopamp2);
+
+	/////////////////////////////////////////////////////////////////////
+
+	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    uint32_t T_PERIOD = 21760;
+    float DUTY = 0.0f;
+
+    // 1. Obliczenie czasu ON
+    uint32_t T_COMP_TON = (uint32_t)(((float)T_PERIOD * DUTY) + 0.5f);
+
+    // 2. Przesunięcie fazowe o 180 stopni (w połowie okresu Mastera) - 10880 ticks
+    uint32_t T_MASTER_PHASE_SHIFT = T_PERIOD / 2;
+
+    // === FAZA A (Timer A) ===
+    // Włącza się na początku okresu (0), wyłącza przy T_COMP_TON
+    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_1, T_COMP_TON);
+
+    // === FAZA B (Timer B) ===
+    // Ponieważ liczniki bazy czasu są zsynchronizowane, Faza B włącza się przy 10880.
+    // Aby trwała tyle samo co Faza A, musi się wyłączyć przy: 10880 + 8704 = 19584
+    uint32_t T_COMP_TIMB_RESET = T_MASTER_PHASE_SHIFT + T_COMP_TON;
+    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, T_COMP_TIMB_RESET);
+
+    // === POMIARY ADC (Wyznaczenie środka czasu TOFF dla prądu średniego) ===
+    uint32_t T_HALF_TOFF = (T_PERIOD - T_COMP_TON) / 2; // Połowa czasu OFF (6528 ticks)
+    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_3, T_COMP_TON + T_HALF_TOFF);	// Dla Fazy A: Środek TOFF wypada w punkcie TON + (TOFF / 2)
+
+    uint32_t T_TIMB_ADC_TRIG = (T_COMP_TIMB_RESET + T_HALF_TOFF) % T_PERIOD;
+    __HAL_HRTIM_SETCOMPARE(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_4, T_TIMB_ADC_TRIG); // Dla Fazy B: Środek TOFF wypada w punkcie RESET_B + (TOFF / 2).
+    // Używamy modulo (%), ponieważ punkt ten może przekroczyć okres i zawinąć się na początek
+
+    // 3. Włączenie wyjść fizycznych HRTIM (TA1, TA2, TB1, TB2)
+    HAL_HRTIM_WaveformOutputStart(&hhrtim1, HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TA2 | HRTIM_OUTPUT_TB1 | HRTIM_OUTPUT_TB2);
+
+    // 4. Start liczników za pomocą poprawnych masek bitowych (ID)!
+    HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER | HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B);
+
 
   /* USER CODE END 2 */
 
@@ -269,54 +289,67 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  uint32_t last_update = 0;
-	  while(1) {
-	      if (HAL_GetTick() - last_update >= 100) { // Wykonuj co 100ms
-	          last_update = HAL_GetTick();
+	// 1. Odczyt Enkodera (bez opóźnień)
+	// Rzutujemy na int16_t, żeby poprawnie obsłużyć kręcenie w lewo (wartości ujemne)
+	int16_t encoder_delta = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
 
-	          // 1. Odczyt Enkodera (bez opóźnień)
-	    	  // Rzutujemy na int16_t, żeby poprawnie obsłużyć kręcenie w lewo (wartości ujemne)
-	    	    int16_t encoder_delta = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
+	if (encoder_delta != 0)
+	{
+		__HAL_TIM_SET_COUNTER(&htim3, 0); // Reset delty
 
-	    	    if (encoder_delta != 0)
-	    	    {
-	    	        __HAL_TIM_SET_COUNTER(&htim3, 0); // Reset delty
+		// Zmiana o 0.1V na każdy "ząbek" enkodera
+		target_voltage += (float)encoder_delta * 0.1f;
 
-	    	        // Zmiana o 0.1V na każdy "ząbek" enkodera
-	    	        target_voltage += (float)encoder_delta * 0.1f;
+		// Limity dla bezpieczeństwa (np. od 2V do 24V)
+		if (target_voltage < 2.0f) target_voltage = 2.0f;
+		if (target_voltage > 24.0f) target_voltage = 24.0f;
 
-	    	        // Limity dla bezpieczeństwa (np. od 2V do 24V)
-	    	        if (target_voltage < 2.0f) target_voltage = 2.0f;
-	    	        if (target_voltage > 24.0f) target_voltage = 24.0f;
+		// Przeliczenie na wartość dla rejestru OFFSET ADC
+		// V_pin = target_voltage * (33.0 / 503.0)
+		// Wartość 12-bit = (V_pin / 2.048) * 4096
+		float v_pin = target_voltage * (33.0f / 503.0f);
+		uint32_t adc_val = (uint32_t)((v_pin / 2.048f) * 4096.0f);
 
-	    	        // Przeliczenie na wartość dla rejestru OFFSET ADC
-	    	        // V_pin = target_voltage * (33.0 / 503.0)
-	    	        // Wartość 12-bit = (V_pin / 2.048) * 4096
-	    	        float v_pin = target_voltage * (33.0f / 503.0f);
-	    	        uint32_t adc_val = (uint32_t)((v_pin / 2.048f) * 4096.0f);
+		// Ograniczenie dla 12 bitów
+		if(adc_val > 4095) adc_val = 4095;
 
-	    	        // Ograniczenie dla 12 bitów
-	    	        if(adc_val > 4095) adc_val = 4095;
+		// Przekazanie nowych nastaw do bezpiecznego załadowania w przerwaniu
+		new_adc_offset = adc_val;
+		update_offset_flag = 1;
+	}
 
-	    	        // Wpisanie do rejestru ADC3 Offset 1 z przesunięciem Left Aligned (Q15)
-	    	        // Wymaga zgaszenia bitu ADC_OFR1_OFFSET1_EN na moment aktualizacji
-	    	        HAL_ADC_
-	    	        ADC3->OFR1 &= ~ADC_OFR1_OFFSET1_EN;
-	    	        ADC3->OFR1 = (ADC3->OFR1 & ~ADC_OFR1_OFFSET1_Msk) | (adc_val << ADC_OFR1_OFFSET1_Pos);
-	    	        ADC3->OFR1 |= ADC_OFR1_OFFSET1_EN;
-	    	    }
+	if (HAL_GetTick() - last_update >= 10)  // Sprawdzamy co np. 50 ms
+	{
+		last_update = HAL_GetTick();
+//		HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
 
+		// 1. SOFT-START (Rampa napięciowa)
+		if (current_voltage < target_voltage) {
+		  current_voltage += 0.1f; // Prędkość narastania: 0.1V co 50ms = 2V na sekundę
+		  if (current_voltage > target_voltage) current_voltage = target_voltage;
+		}
+		else if (current_voltage > target_voltage) {
+		  current_voltage -= 0.1f; // Płynne opadanie przy zmniejszaniu nastawy
+		  if (current_voltage < target_voltage) current_voltage = target_voltage;
+		}
 
+		// 2. Kalkulacja offsetu na podstawie CURRENT_VOLTAGE (a nie target)
+		float v_pin = current_voltage * (33.0f / 503.0f);
+		uint32_t adc_val = (uint32_t)((v_pin / 2.048f) * 4096.0f);
+		if(adc_val > 4095) adc_val = 4095;
 
-	          // 2. Wysłanie danych do LCD przez I2C
-	          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
-	      }
-	  }
+		// 3. Wysłanie flagi do aktualizacji w przerwaniu
+		new_adc_offset = adc_val;
+		update_offset_flag = 1;
+	}
 
+	// Dioda na nieblokującym delay-u z HAL_GetTick()
+	if (HAL_GetTick() - last_update >= 100) { // Wykonuj co 100ms
+		last_update = HAL_GetTick();
+		// 2. Wysłanie danych do LCD przez I2C
 
-
-
-
+		HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
+	}
 
   }
   /* USER CODE END 3 */
@@ -403,7 +436,7 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIG_HRTIM_TRG1;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.DMAContinuousRequests = DISABLE;
-  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc1.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
   hadc1.Init.OversamplingMode = DISABLE;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
@@ -470,7 +503,7 @@ static void MX_ADC2_Init(void)
   hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIG_HRTIM_TRG5;
   hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc2.Init.DMAContinuousRequests = DISABLE;
-  hadc2.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc2.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
   hadc2.Init.OversamplingMode = DISABLE;
   if (HAL_ADC_Init(&hadc2) != HAL_OK)
   {
@@ -552,7 +585,7 @@ static void MX_ADC3_Init(void)
   sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_1;
-  sConfig.Offset = 1574;
+  sConfig.Offset = 0;
   sConfig.OffsetSign = ADC_OFFSET_SIGN_NEGATIVE;
   sConfig.OffsetSaturation = DISABLE;
   if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
@@ -584,7 +617,7 @@ static void MX_COMP1_Init(void)
   hcomp1.Init.InputPlus = COMP_INPUT_PLUS_IO2;
   hcomp1.Init.InputMinus = COMP_INPUT_MINUS_DAC3_CH1;
   hcomp1.Init.OutputPol = COMP_OUTPUTPOL_NONINVERTED;
-  hcomp1.Init.Hysteresis = COMP_HYSTERESIS_NONE;
+  hcomp1.Init.Hysteresis = COMP_HYSTERESIS_HIGH;
   hcomp1.Init.BlankingSrce = COMP_BLANKINGSRC_NONE;
   hcomp1.Init.TriggerMode = COMP_TRIGGERMODE_NONE;
   if (HAL_COMP_Init(&hcomp1) != HAL_OK)
@@ -616,7 +649,7 @@ static void MX_COMP3_Init(void)
   hcomp3.Init.InputPlus = COMP_INPUT_PLUS_IO1;
   hcomp3.Init.InputMinus = COMP_INPUT_MINUS_DAC1_CH1;
   hcomp3.Init.OutputPol = COMP_OUTPUTPOL_NONINVERTED;
-  hcomp3.Init.Hysteresis = COMP_HYSTERESIS_NONE;
+  hcomp3.Init.Hysteresis = COMP_HYSTERESIS_HIGH;
   hcomp3.Init.BlankingSrce = COMP_BLANKINGSRC_NONE;
   hcomp3.Init.TriggerMode = COMP_TRIGGERMODE_NONE;
   if (HAL_COMP_Init(&hcomp3) != HAL_OK)
@@ -767,6 +800,7 @@ static void MX_HRTIM1_Init(void)
   HRTIM_TimerCfgTypeDef pTimerCfg = {0};
   HRTIM_TimerCtlTypeDef pTimerCtl = {0};
   HRTIM_CompareCfgTypeDef pCompareCfg = {0};
+  HRTIM_TimerEventFilteringCfgTypeDef pTimerEventFilteringCfg = {0};
   HRTIM_DeadTimeCfgTypeDef pDeadTimeCfg = {0};
   HRTIM_OutputCfgTypeDef pOutputCfg = {0};
 
@@ -867,6 +901,7 @@ static void MX_HRTIM1_Init(void)
     Error_Handler();
   }
   pTimerCtl.UpDownMode = HRTIM_TIMERUPDOWNMODE_UP;
+  pTimerCtl.TrigHalf = HRTIM_TIMERTRIGHALF_DISABLED;
   pTimerCtl.GreaterCMP3 = HRTIM_TIMERGTCMP3_EQUAL;
   pTimerCtl.GreaterCMP1 = HRTIM_TIMERGTCMP1_EQUAL;
   pTimerCtl.DualChannelDacEnable = HRTIM_TIMER_DCDE_DISABLED;
@@ -898,14 +933,31 @@ static void MX_HRTIM1_Init(void)
   {
     Error_Handler();
   }
+  pCompareCfg.CompareValue = 65503;
+  pCompareCfg.AutoDelayedMode = HRTIM_AUTODELAYEDMODE_REGULAR;
+  pCompareCfg.AutoDelayedTimeout = 0x0000;
+
+  if (HAL_HRTIM_WaveformCompareConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_2, &pCompareCfg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  pCompareCfg.CompareValue = 0;
   if (HAL_HRTIM_WaveformCompareConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_COMPAREUNIT_3, &pCompareCfg) != HAL_OK)
   {
     Error_Handler();
   }
-  pCompareCfg.AutoDelayedMode = HRTIM_AUTODELAYEDMODE_REGULAR;
-  pCompareCfg.AutoDelayedTimeout = 0x0000;
 
   if (HAL_HRTIM_WaveformCompareConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_4, &pCompareCfg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  pTimerEventFilteringCfg.Filter = HRTIM_TIMEEVFLT_BLANKINGCMP2;
+  pTimerEventFilteringCfg.Latch = HRTIM_TIMEVENTLATCH_DISABLED;
+  if (HAL_HRTIM_TimerEventFilteringConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_EVENT_4, &pTimerEventFilteringCfg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_HRTIM_TimerEventFilteringConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_A, HRTIM_EVENT_5, &pTimerEventFilteringCfg) != HAL_OK)
   {
     Error_Handler();
   }
@@ -965,6 +1017,12 @@ static void MX_HRTIM1_Init(void)
     Error_Handler();
   }
   if (HAL_HRTIM_WaveformCompareConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_1, &pCompareCfg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  pCompareCfg.CompareValue = 800;
+
+  if (HAL_HRTIM_WaveformCompareConfig(&hhrtim1, HRTIM_TIMERINDEX_TIMER_B, HRTIM_COMPAREUNIT_2, &pCompareCfg) != HAL_OK)
   {
     Error_Handler();
   }
@@ -1144,16 +1202,16 @@ static void MX_TIM3_Init(void)
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
+  sConfig.IC1Filter = 15;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 0;
+  sConfig.IC2Filter = 15;
   if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -1217,7 +1275,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : PB3 */
   GPIO_InitStruct.Pin = GPIO_PIN_3;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 

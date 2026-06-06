@@ -59,6 +59,8 @@ extern DMA_HandleTypeDef hdma_adc3;
 extern FMAC_HandleTypeDef hfmac;
 /* USER CODE BEGIN EV */
 extern HRTIM_HandleTypeDef hhrtim1;
+extern volatile uint32_t new_adc_offset;
+extern volatile uint8_t update_offset_flag;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -220,55 +222,73 @@ void FMAC_IRQHandler(void)
 {
   /* USER CODE BEGIN FMAC_IRQn 0 */
 	// Sprawdzamy czy przerwanie pochodzi od gotowych danych (YEMPTY)
-	  if((FMAC->SR & FMAC_SR_YEMPTY) == 0)
-	  {
-	      // 1. Odczyt rejestru RDATA zdejmuje sprzętową flagę przerwania
-	      int16_t control_effort_q15 = (int16_t)READ_REG(FMAC->RDATA);
+	if((FMAC->SR & FMAC_SR_YEMPTY) == 0)
+	{
+		// 1. Odczyt rejestru RDATA zdejmuje sprzętową flagę przerwania
+		int16_t control_effort_q15 = (int16_t)READ_REG(FMAC->RDATA);
+		//control_effort_q15 = 0;
 
-	      // 2. Skalowanie
-	      int32_t pwm_base = 21760 * 0.2f; // 20%
-	      int32_t duty_change = ((int32_t)control_effort_q15 * 21760) >> 15;
-	      int32_t new_ton = pwm_base + duty_change;
+		// BEZPIECZNE OKNO CZASOWE: ADSTART = 0. Dokonujemy aktualizacji!
+		if (update_offset_flag)
+		{
+			ADC3->OFR1 &= ~ADC_OFR1_OFFSET1_EN;
+			// Wrzucamy czyste bity bez przesunięcia, jak słusznie zauważyłeś!
+			ADC3->OFR1 = (ADC3->OFR1 & ~ADC_OFR1_OFFSET1_Msk) | new_adc_offset;
+			ADC3->OFR1 |= ADC_OFR1_OFFSET1_EN;
 
-	      // 3. Saturacja
-	      if (new_ton < 435)   new_ton = 435;
-	      if (new_ton > 10880) new_ton = 10880;
+			update_offset_flag = 0; // Zadanie wykonane
+		}
 
-	      // 4. BEZPOŚREDNIA AKTUALIZACJA REJESTRÓW HRTIM (Najszybsza metoda)
-	      //HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton;
+		// 2. Skalowanie
+		int32_t pwm_base = 21760 * 0.2f; // 20%
+		int32_t duty_change = ((int32_t)control_effort_q15 * 21760) >> 15;
+		int32_t new_ton = pwm_base + duty_change;
 
-	      uint32_t reset_b = (21760 / 2) + new_ton;
-	      //HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
+		// 3. Saturacja
+		if (new_ton < 435)   new_ton = 435;
+		if (new_ton > 10880) new_ton = 10880;
 
-	      // Wyliczenie połowy Toff dla przyszłego pomiaru prądu
-	      uint32_t half_toff = (21760 - new_ton) / 2;
-	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP3xR = new_ton + half_toff;
-	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP4xR = (reset_b + half_toff) % 21760;
+		// 4. BEZPOŚREDNIA AKTUALIZACJA REJESTRÓW HRTIM (Najszybsza metoda)
+//		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton;
 
-	      //BALANSOWANIE FAZ
-	      int32_t current_ph1 = (int32_t)(ADC2->DR >> 4);
-	      int32_t current_ph2 = (int32_t)(ADC1->DR >> 4);
+		uint32_t reset_b = (21760 / 2) + new_ton;
+//		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
 
-	      // Błąd prądu
-	      int32_t i_error = current_ph1 - current_ph2;
 
-	      // Podział poprawki (jeszcze mniejsze wzmocnienie, np. >> 2 co daje Kp=0.25)
-	      int32_t balance_effort = i_error >> 2;
+/////////////////////////
 
-	      if (balance_effort > 300) balance_effort = 300;
-	      if (balance_effort < -300) balance_effort = -300;
+//		//BALANSOWANIE FAZ
+		int32_t current_ph1 = (int32_t)(ADC2->DR);
+		int32_t current_ph2 = (int32_t)(ADC1->DR);
+//		int32_t current_ph1 = 1500;
+//		int32_t current_ph2 = 2500;
 
-	      // Faza 1 - Odejmujemy połowę błędu
-	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton - balance_effort;
+		// Błąd prądu
+		int32_t i_error = current_ph1 - current_ph2;
 
-	      // Faza 2 - Dodajemy połowę błędu
-	      uint32_t reset_b = (21760 / 2) + new_ton + balance_effort;
-	      HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
+		// Podział poprawki (jeszcze mniejsze wzmocnienie, np. >> 2 co daje Kp=0.25)
+		int32_t balance_effort = i_error >> 2;
 
-	      // 5. Wychodzimy z funkcji, omijając wywołanie funkcji HAL
-	      return;
-	  }
-	  return;
+		if (balance_effort > 300) balance_effort = 300;
+		if (balance_effort < -300) balance_effort = -300;
+
+		// Faza 1 - Odejmujemy połowę błędu
+		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton - balance_effort;
+
+		// Faza 2 - Dodajemy połowę błędu
+		reset_b = (21760 / 2) + new_ton + balance_effort;
+		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
+
+
+////////////////////////
+
+		// Wyliczenie połowy Toff pomiaru prądu
+		uint32_t half_toff = (21760 - new_ton) / 2;
+		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP3xR = new_ton + half_toff;
+		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP4xR = (reset_b + half_toff) % 21760;
+
+	}
+	return;
   /* USER CODE END FMAC_IRQn 0 */
   HAL_FMAC_IRQHandler(&hfmac);
   /* USER CODE BEGIN FMAC_IRQn 1 */

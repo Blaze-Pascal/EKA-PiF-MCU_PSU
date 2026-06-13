@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "I2C_LCD_cfg.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,7 +31,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define MyI2C_LCD I2C_LCD_1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -66,7 +66,11 @@ TIM_HandleTypeDef htim3;
 /* USER CODE BEGIN PV */
 float target_voltage = 12.0f;  // Cel docelowy (zmieniany enkoderem)
 float current_voltage = 0.0f;  // Rzeczywiste napięcie, od którego startujemy
+float target_current = 1.0f;   // Domyślny limit prądu np. 1.0A
+uint8_t edit_mode = 0;         // 0 = Edycja Napięcia, 1 = Edycja Prądu
+uint8_t last_btn_state = 1;    // Zakładamy pull-up na przycisku (wewnętrzny lub zewn.)
 uint32_t last_update = 0;
+uint32_t last_update_ui = 0;
 volatile uint32_t new_adc_offset = 0; // Wartość startowa
 volatile uint8_t update_offset_flag = 0;
 /* USER CODE END PV */
@@ -241,7 +245,18 @@ int main(void)
 
 	/////////////////////////////////////////////////////////////////////
 
+    //UI
+
 	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+
+	//HAL_I2C_Init(&hi2c1);
+	MX_I2C1_Init();
+
+	I2C_LCD_Init(MyI2C_LCD);
+	I2C_LCD_Clear(MyI2C_LCD);
+	I2C_LCD_Backlight(MyI2C_LCD);
+	I2C_LCD_NoBacklight(MyI2C_LCD);
+	I2C_LCD_Backlight(MyI2C_LCD);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -279,6 +294,7 @@ int main(void)
     HAL_HRTIM_WaveformCounterStart(&hhrtim1, HRTIM_TIMERID_MASTER | HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B);
 
 
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -289,39 +305,39 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	// 1. Odczyt Enkodera (bez opóźnień)
-	// Rzutujemy na int16_t, żeby poprawnie obsłużyć kręcenie w lewo (wartości ujemne)
-	int16_t encoder_delta = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
-
-	if (encoder_delta != 0)
-	{
-		__HAL_TIM_SET_COUNTER(&htim3, 0); // Reset delty
-
-		// Zmiana o 0.1V na każdy "ząbek" enkodera
-		target_voltage += (float)encoder_delta * 0.1f;
-
-		// Limity dla bezpieczeństwa (np. od 2V do 24V)
-		if (target_voltage < 2.0f) target_voltage = 2.0f;
-		if (target_voltage > 24.0f) target_voltage = 24.0f;
-
-		// Przeliczenie na wartość dla rejestru OFFSET ADC
-		// V_pin = target_voltage * (33.0 / 503.0)
-		// Wartość 12-bit = (V_pin / 2.048) * 4096
-		float v_pin = target_voltage * (33.0f / 503.0f);
-		uint32_t adc_val = (uint32_t)((v_pin / 2.048f) * 4096.0f);
-
-		// Ograniczenie dla 12 bitów
-		if(adc_val > 4095) adc_val = 4095;
-
-		// Przekazanie nowych nastaw do bezpiecznego załadowania w przerwaniu
-		new_adc_offset = adc_val;
-		update_offset_flag = 1;
-	}
+//	// 1. Odczyt Enkodera (bez opóźnień)
+//	// Rzutujemy na int16_t, żeby poprawnie obsłużyć kręcenie w lewo (wartości ujemne)
+//	int16_t encoder_delta = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
+//
+//	if (encoder_delta != 0)
+//	{
+//		__HAL_TIM_SET_COUNTER(&htim3, 0); // Reset delty
+//
+//		// Zmiana o 0.1V na każdy "ząbek" enkodera
+//		target_voltage += (float)encoder_delta * 0.1f;
+//
+//		// Limity dla bezpieczeństwa (np. od 2V do 24V)
+//		if (target_voltage < 2.0f) target_voltage = 2.0f;
+//		if (target_voltage > 24.0f) target_voltage = 24.0f;
+//
+//		// Przeliczenie na wartość dla rejestru OFFSET ADC
+//		// V_pin = target_voltage * (33.0 / 503.0)
+//		// Wartość 12-bit = (V_pin / 2.048) * 4096
+//		float v_pin = target_voltage * (33.0f / 503.0f);
+//		uint32_t adc_val = (uint32_t)((v_pin / 2.048f) * 4096.0f);
+//
+//		// Ograniczenie dla 12 bitów
+//		if(adc_val > 4095) adc_val = 4095;
+//
+//		// Przekazanie nowych nastaw do bezpiecznego załadowania w przerwaniu
+//		new_adc_offset = adc_val;
+//		update_offset_flag = 1;
+//	}
 
 	if (HAL_GetTick() - last_update >= 10)  // Sprawdzamy co np. 50 ms
 	{
 		last_update = HAL_GetTick();
-//		HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
+		//HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14); //Dioda sygalizująca start programu
 
 		// 1. SOFT-START (Rampa napięciowa)
 		if (current_voltage < target_voltage) {
@@ -343,14 +359,100 @@ int main(void)
 		update_offset_flag = 1;
 	}
 
-	// Dioda na nieblokującym delay-u z HAL_GetTick()
-	if (HAL_GetTick() - last_update >= 100) { // Wykonuj co 100ms
-		last_update = HAL_GetTick();
-		// 2. Wysłanie danych do LCD przez I2C
+  if (HAL_GetTick() - last_update_ui >= 100)
+  {
+		last_update_ui = HAL_GetTick();
 
+		// =================================================================
+		// 1. OBSŁUGA PRZYCISKU ENKODERA (PB3) Z PROSTYM DEBOUNCE
+		// =================================================================
+		uint8_t btn_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
+
+		// Wykrywamy wciśnięcie (zbocze opadające na pull-upie)
+		if (btn_state == GPIO_PIN_RESET && last_btn_state == GPIO_PIN_SET)
+		{
+			edit_mode = !edit_mode; // Przełącz: 0 (Napięcie) <-> 1 (Prąd)
+			I2C_LCD_Clear(I2C_LCD_1); // Czyścimy ekran przy zmianie trybu, żeby usunąć stary wskaźnik ">"
+		}
+		last_btn_state = btn_state;
+
+		// =================================================================
+		// 2. ODCZYT ENKODERA I AKTUALIZACJA NASTAW
+		// =================================================================
+		int16_t encoder_delta = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
+
+		if (encoder_delta != 0)
+		{
+			__HAL_TIM_SET_COUNTER(&htim3, 0); // Reset licznika hardware'owego
+
+			if (edit_mode == 0)
+			{
+				// --- TRYB CV: Edycja Napięcia ---
+				target_voltage += (float)encoder_delta * 0.1f; // Krok o 0.1V
+				if (target_voltage < 1.0f)  target_voltage = 1.0f;
+				if (target_voltage > 24.0f) target_voltage = 24.0f;
+
+				// Przeliczenie na wartość dla rejestru OFFSET ADC
+				// V_pin = target_voltage * (33.0 / 503.0)
+				// Wartość 12-bit = (V_pin / 2.048) * 4096
+				float v_pin = target_voltage * (33.0f / 503.0f);
+				uint32_t adc_val = (uint32_t)((v_pin / 2.048f) * 4096.0f);
+
+				// Ograniczenie dla 12 bitów
+				if(adc_val > 4095) adc_val = 4095;
+
+				// Przekazanie nowych nastaw do bezpiecznego załadowania w przerwaniu
+				new_adc_offset = adc_val;
+				update_offset_flag = 1;
+			}
+			else
+			{
+				// --- TRYB CC ("Bieda CC"): Edycja Limitu Prądu ---
+				target_current += (float)encoder_delta * 0.1f; // Krok o 0.1A
+				if (target_current < 0.2f)  target_current = 0.2f;
+				if (target_current > 10.0f) target_current = 10.0f;
+
+				// Przesterowanie DAC-ów dla komparatorów (Valley Current Limit)
+				// Zakładamy: Bocznik 10 mOhm, Wzmocnienie OpAmp = 20, VREF = 2.048V
+				float v_opamp = target_current * 0.01f * 20.0f;
+				uint32_t dac_val = (uint32_t)((v_opamp / 2.048f) * 4096.0f);
+				if (dac_val > 4095) dac_val = 4095;
+
+				// Wpisujemy próg bezpośrednio do rejestrów DAC dla obu faz
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_val);
+				HAL_DAC_SetValue(&hdac3, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_val);
+			}
+		}
+
+		// =================================================================
+		// 3. SPYTNA RESTRUKTURYZACJA SPRINTF (BEZ FLOATA) I WYŚWIETLANIE
+		// =================================================================
+		char lcd_buf[17]; // Bufor na jedną linię (16 znaków + '\0')
+
+		// Rozbijamy Floaty na Integery (Szybkie i bezpieczne dla pamięci)
+		uint16_t v_whole = (uint16_t)target_voltage;
+		uint16_t v_frac  = (uint16_t)((target_voltage - (float)v_whole) * 10.0f + 0.5f); // +0.5 zapobiega błędom zaokrągleń floatów
+		if (v_frac >= 10) { v_frac = 0; v_whole++; }
+
+		uint16_t i_whole = (uint16_t)target_current;
+		uint16_t i_frac  = (uint16_t)((target_current - (float)i_whole) * 10.0f + 0.5f);
+		if (i_frac >= 10) { i_frac = 0; i_whole++; }
+
+		// --- LINIA 1: Napięcie Zadane ---
+		// Znak '>' ląduje po lewej stronie, jeśli edit_mode == 0
+		sprintf(lcd_buf, "%c V_Set: %2u.%1uV ", (edit_mode == 0) ? '>' : ' ', v_whole, v_frac);
+		I2C_LCD_SetCursor(MyI2C_LCD, 0, 0); // Kolumna 0, Wiersz 0
+		I2C_LCD_WriteString(MyI2C_LCD, lcd_buf);
+
+		// --- LINIA 2: Prąd Zadany (Limit DAC) ---
+		// Znak '>' ląduje po lewej stronie, jeśli edit_mode == 1
+		sprintf(lcd_buf, "%c I_Lim: %2u.%1uA ", (edit_mode == 1) ? '>' : ' ', i_whole, i_frac);
+		I2C_LCD_SetCursor(MyI2C_LCD, 0, 1); // Kolumna 0, Wiersz 1
+		I2C_LCD_WriteString(MyI2C_LCD, lcd_buf);
+
+		// Migamy diodą diagnostyczną pętli głównej
 		HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
-	}
-
+	  }
   }
   /* USER CODE END 3 */
 }
@@ -1049,7 +1151,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x40621236;
+  hi2c1.Init.Timing = 0x40B285C2;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;

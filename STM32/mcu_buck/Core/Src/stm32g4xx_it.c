@@ -245,23 +245,16 @@ void FMAC_IRQHandler(void)
 		int32_t new_ton = pwm_base + duty_change;
 
 		// 3. Saturacja
-		if (new_ton < 435)   new_ton = 435;
-		if (new_ton > 10880) new_ton = 10880;
-
-		// 4. BEZPOŚREDNIA AKTUALIZACJA REJESTRÓW HRTIM (Najszybsza metoda)
-//		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton;
-
-		uint32_t reset_b = (21760 / 2) + new_ton;
-//		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
-
+		if (new_ton < 0)   new_ton = 0;
+		if (new_ton > 19584) new_ton = 19584;
 
 /////////////////////////
 
 //		//BALANSOWANIE FAZ
 		int32_t current_ph1 = (int32_t)(ADC2->DR);
 		int32_t current_ph2 = (int32_t)(ADC1->DR);
-//		int32_t current_ph1 = 1500;
-//		int32_t current_ph2 = 2500;
+//		int32_t current_ph1 = 1000;
+//		int32_t current_ph2 = 3000;
 
 		// Błąd prądu
 		int32_t i_error = current_ph1 - current_ph2;
@@ -276,7 +269,7 @@ void FMAC_IRQHandler(void)
 		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_A].CMP1xR = new_ton - balance_effort;
 
 		// Faza 2 - Dodajemy połowę błędu
-		reset_b = (21760 / 2) + new_ton + balance_effort;
+		uint32_t reset_b = (21760 / 2) + new_ton + balance_effort;
 		HRTIM1->sTimerxRegs[HRTIM_TIMERINDEX_TIMER_B].CMP1xR = reset_b;
 
 

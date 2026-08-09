@@ -494,9 +494,9 @@
 		)
 		(uuid "4a218dc7-8749-4f89-8620-4794d4a6f5b1")
 	)
-	(text "\n	> V1.0 - to be established"
+	(text "\n	> V1.0 		- release version\n	\n	> V1.1 		- fix silkscreen for SWD\n				- change the current feedback connections (+/-)"
 		(exclude_from_sim no)
-		(at 15.24 157.48 0)
+		(at 160.02 20.32 0)
 		(effects
 			(font
 				(size 1.905 1.905)
@@ -508,7 +508,7 @@
 	)
 	(text "\n	> 2-phase\n	> Synchronous\n	> 30V in, 12V 10A out \n	> buck converter\n	> based on STM32G474"
 		(exclude_from_sim no)
-		(at 160.02 20.32 0)
+		(at 16.764 157.48 0)
 		(effects
 			(font
 				(size 1.905 1.905)
@@ -518,7 +518,7 @@
 		)
 		(uuid "a304da38-71fa-4fa4-8fc2-85d6529fdf81")
 	)
-	(text "Project Description"
+	(text "Version Changes"
 		(exclude_from_sim no)
 		(at 160.02 20.32 0)
 		(effects

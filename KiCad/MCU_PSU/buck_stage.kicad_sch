@@ -1916,6 +1916,16 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "change to shunt!"
+		(exclude_from_sim no)
+		(at 185.42 106.68 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "5d9e6591-7721-420e-9acc-49566ffea701")
+	)
 	(junction
 		(at 62.23 69.85)
 		(diameter 0)
